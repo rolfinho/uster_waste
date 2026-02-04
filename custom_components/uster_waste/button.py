@@ -1,6 +1,5 @@
 """Button platform for Uster Waste."""
 import logging
-from typing import Optional
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
@@ -18,12 +17,9 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the button."""
-    config = entry.data
-    name = config.get("name", "Uster Waste")
-
     entity = UsterWasteButton(
         entry_id=entry.entry_id,
-        name=name
+        name=entry.data.get("name", "Uster Waste")
     )
     async_add_entities([entity])
 
@@ -45,22 +41,16 @@ class UsterWasteButton(ButtonEntity):
 
     async def async_press(self) -> None:
         """Handle the button press (manual refresh)."""
-        # Trigger a manual update of the sensor
-        hass = self.hass
-        coordinator = None
+        # Trigger a manual update by calling the sensor's update method
+        # The sensor will fetch fresh data from the Uster website
+        entity_registry = self.hass.data["entity_registry"]
         
-        # Find the coordinator for this entry
-        if DOMAIN in hass.data:
-            for entry_id, entry_data in hass.data[DOMAIN].items():
-                if entry_id == self._entry_id and "coordinator" in entry_data:
-                    coordinator = entry_data["coordinator"]
-                    break
+        # Find the sensor entity for this entry
+        entity_id = f"sensor.uster_waste_{self._entry_id}"
         
-        if coordinator:
-            await coordinator.async_update()
-            # Force sensor to update
-            for entity in coordinator.entities:
-                await entity.async_update()
-                entity.async_write_ha_state()
-        else:
-            _LOGGER.error("Coordinator not found for manual refresh")
+        # Trigger update for the sensor
+        await self.hass.services.async_call(
+            "homeassistant", "update_entity",
+            {"entity_id": entity_id},
+            blocking=False,
+        )
