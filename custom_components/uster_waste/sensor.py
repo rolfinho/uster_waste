@@ -11,7 +11,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+
 
 from .const import (
     DOMAIN,
@@ -70,112 +70,6 @@ async def async_setup_entry(
         name=name
     )
     async_add_entities([entity])
-
-
-class UsterWasteDataUpdateCoordinator(DataUpdateCoordinator[dict]):
-    """Fetch data from Uster website."""
-
-    def __init__(
-        self,
-        hass: HomeAssistant,
-        session: aiohttp.ClientSession,
-        token: str,
-        waste_id: str,
-    ):
-        super().__init__(hass, _LOGGER, name="Uster Waste", update_interval=SCAN_INTERVAL)
-        self.session = session
-        self.token = token
-        self.waste_id = waste_id
-        self.data = None
-        self.last_error = None
-        self.last_updated = None
-
-    async def async_update(self) -> dict:
-        """Fetch data (cache if valid)."""
-        # 1. Check cache (valid for 24h)
-        if self.last_updated and (datetime.now() - self.last_updated) < SCAN_INTERVAL:
-            return self.data
-
-        url = (
-            "https://www.uster.ch/abfallstrassenabschnitt"
-            f"?strassenabschnitt%5B_token%5D={self.token}"
-            f"&strassenabschnitt%5BstrassenabschnittId%5D={self.waste_id}"
-        )
-
-        try:
-            async with self.session.get(url, timeout=10) as response:
-                if response.status == 403 or response.status == 404:
-                    raise Exception(
-                        "Token expired or invalid. "
-                        "Please get a fresh URL from https://www.uster.ch/abfallstrassenabschnitt"
-                    )
-                response.raise_for_status()
-                html = await response.text()
-
-            # Parse HTML
-            soup = BeautifulSoup(html, "html.parser")
-            table = soup.find("table", class_="table table-striped")
-            if not table:
-                table = soup.find("table")
-                if not table:
-                    raise ValueError("No table found on page.")
-
-            rows = table.find_all("tr")
-            if len(rows) < 2:
-                raise ValueError("Table has no data rows.")
-
-            entries = []
-            now = datetime.now()
-
-            for row in rows[1:4]:  # Next 3 entries
-                cols = row.find_all("td")
-                if len(cols) < 2:
-                    continue
-
-                collection_type = cols[0].get_text(strip=True)
-                date_str = cols[1].get_text(strip=True).replace(" \u00a0", " ")  # Clean no-break space
-                dt = _parse_date(date_str)
-                if not dt:
-                    _LOGGER.warning(f"Skipping row with invalid date: {date_str}")
-                    continue
-
-                entries.append({
-                    "Sammlung": collection_type,
-                    "Wann?": date_str,
-                    "date_obj": dt,
-                    "days_until": (dt - now).days
-                })
-
-            # Sort by date (ascending)
-            entries.sort(key=lambda x: x["date_obj"])
-
-            self.data = {
-                "next_collection": entries[0]["Sammlung"] if entries else None,
-                "date": entries[0]["Wann?"] if entries else None,
-                "type": entries[0]["Sammlung"] if entries else None,
-                "days_until": entries[0]["days_until"] if entries else None,
-                "entries": [
-                    {
-                        "type": e["Sammlung"],
-                        "date": e["Wann?"],
-                        "days_until": e["days_until"]
-                    }
-                    for e in entries[:3]
-                ]
-            }
-            self.last_updated = datetime.now()
-
-        except Exception as e:
-            _LOGGER.error("Error fetching Uster data: %s", e)
-            self.data = {
-                ATTR_ERROR: str(e),
-                "next_collection": None,
-                "date": None,
-                "entries": []
-            }
-            self.last_error = str(e)
-
-        return self.data
 
 
 class UsterWasteSensor(SensorEntity):
@@ -307,7 +201,7 @@ class UsterWasteSensor(SensorEntity):
     @property
     def available(self) -> bool:
         """Return if entity is available."""
-        return self.coordinator.last_updated is not None
+        return self.data is not None
 
     async def async_press(self):
         """Handle the button press (manual refresh)."""
