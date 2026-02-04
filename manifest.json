@@ -1,0 +1,17 @@
+{
+  "domain": "uster_waste",
+  "name": "Uster Waste Collection",
+  "codeowners": [
+    "@rolfinho"
+  ],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/rolfinho/uster_waste",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/rolfinho/uster_waste/issues",
+  "platforms": ["sensor", "button"],
+  "requirements": ["aiohttp", "beautifulsoup4"],
+  "version": "0.0.1"
+}
+
