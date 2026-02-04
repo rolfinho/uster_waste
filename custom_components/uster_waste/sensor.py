@@ -203,15 +203,16 @@ class UsterWasteSensor(SensorEntity):
 
     async def async_update(self):
         """Update sensor state."""
-        self._attr_native_value = len(self.coordinator.data.get("entries", []))
+        data = self.coordinator.data if self.coordinator.data is not None else {}
+        self._attr_native_value = len(data.get("entries", []))
         self._attr_extra_state_attributes.update(
             {
-                ATTR_NEXT_COLLECTION: self.coordinator.data.get("next_collection"),
-                ATTR_DATE: self.coordinator.data.get("date"),
-                ATTR_TYPE: self.coordinator.data.get("type"),
-                ATTR_DAYS_UNTIL: self.coordinator.data.get("days_until"),
-                ATTR_ENTRIES: self.coordinator.data.get("entries", []),
-                ATTR_ERROR: self.coordinator.data.get("error")
+                ATTR_NEXT_COLLECTION: data.get("next_collection"),
+                ATTR_DATE: data.get("date"),
+                ATTR_TYPE: data.get("type"),
+                ATTR_DAYS_UNTIL: data.get("days_until"),
+                ATTR_ENTRIES: data.get("entries", []),
+                ATTR_ERROR: data.get("error")
             }
         )
 
