@@ -63,18 +63,16 @@ async def async_setup_entry(
     waste_id = config["id"]
     name = config.get("name", "Uster Waste")
 
-    session = async_get_clientsession(hass)
-    coordinator = UsterWasteDataUpdateCoordinator(hass, session, token, waste_id)
-
     entity = UsterWasteSensor(
         entry_id=entry.entry_id,
-        coordinator=coordinator,
+        token=token,
+        waste_id=waste_id,
         name=name
     )
-    async_add_entities([entity], update_before_add=True)
+    async_add_entities([entity])
 
 
-class UsterWasteDataUpdateCoordinator:
+class UsterWasteDataUpdateCoordinator(DataUpdateCoordinator[dict]):
     """Fetch data from Uster website."""
 
     def __init__(
@@ -84,7 +82,7 @@ class UsterWasteDataUpdateCoordinator:
         token: str,
         waste_id: str,
     ):
-        self.hass = hass
+        super().__init__(hass, _LOGGER, name="Uster Waste", update_interval=SCAN_INTERVAL)
         self.session = session
         self.token = token
         self.waste_id = waste_id
@@ -190,20 +188,25 @@ class UsterWasteSensor(SensorEntity):
     def __init__(
         self,
         entry_id: str,
-        coordinator: UsterWasteDataUpdateCoordinator,
+        token: str,
+        waste_id: str,
         name: str
     ):
         self._entry_id = entry_id
-        self.coordinator = coordinator
+        self.token = token
+        self.waste_id = waste_id
         self._attr_name = f"{name} Schedule"
         self._attr_unique_id = f"uster_waste_{entry_id}"
         self._attr_extra_state_attributes = {
             ATTR_ENTRIES: [],
         }
+        self.data = None
 
     async def async_update(self):
         """Update sensor state."""
-        data = self.coordinator.data if self.coordinator.data is not None else {}
+        # Fetch fresh data
+        data = await self._fetch_data()
+        self.data = data
         self._attr_native_value = len(data.get("entries", []))
         self._attr_extra_state_attributes.update(
             {
@@ -216,14 +219,88 @@ class UsterWasteSensor(SensorEntity):
             }
         )
 
+    async def _fetch_data(self) -> dict:
+        """Fetch data from Uster website."""
+        try:
+            session = async_get_clientsession(self.hass)
+            url = (
+                "https://www.uster.ch/abfallstrassenabschnitt"
+                f"?strassenabschnitt%5B_token%5D={self.token}"
+                f"&strassenabschnitt%5BstrassenabschnittId%5D={self.waste_id}"
+            )
+
+            async with session.get(url, timeout=10) as response:
+                if response.status == 403 or response.status == 404:
+                    raise Exception(
+                        "Token expired or invalid. "
+                        "Please get a fresh URL from https://www.uster.ch/abfallstrassenabschnitt"
+                    )
+                response.raise_for_status()
+                html = await response.text()
+
+            # Parse HTML
+            soup = BeautifulSoup(html, "html.parser")
+            table = soup.find("table", class_="table table-striped")
+            if not table:
+                table = soup.find("table")
+                if not table:
+                    raise ValueError("No table found on page.")
+
+            rows = table.find_all("tr")
+            if len(rows) < 2:
+                raise ValueError("Table has no data rows.")
+
+            entries = []
+            now = datetime.now()
+
+            for row in rows[1:4]:  # Next 3 entries
+                cols = row.find_all("td")
+                if len(cols) < 2:
+                    continue
+
+                collection_type = cols[0].get_text(strip=True)
+                date_str = cols[1].get_text(strip=True).replace("  ", " ")  # Clean no-break space
+                dt = _parse_date(date_str)
+                if not dt:
+                    _LOGGER.warning(f"Skipping row with invalid date: {date_str}")
+                    continue
+
+                entries.append({
+                    "Sammlung": collection_type,
+                    "Wann?": date_str,
+                    "date_obj": dt,
+                    "days_until": (dt - now).days
+                })
+
+            # Sort by date (ascending)
+            entries.sort(key=lambda x: x["date_obj"])
+
+            return {
+                "next_collection": entries[0]["Sammlung"] if entries else None,
+                "date": entries[0]["Wann?"] if entries else None,
+                "type": entries[0]["Sammlung"] if entries else None,
+                "days_until": entries[0]["days_until"] if entries else None,
+                "entries": [
+                    {
+                        "type": e["Sammlung"],
+                        "date": e["Wann?"],
+                        "days_until": e["days_until"]
+                    }
+                    for e in entries[:3]
+                ]
+            }
+        except Exception as e:
+            _LOGGER.error("Error fetching Uster data: %s", e)
+            return {
+                ATTR_ERROR: str(e),
+                "next_collection": None,
+                "date": None,
+                "entries": []
+            }
+
     async def async_added_to_hass(self):
         """When entity is added to hass."""
         await super().async_added_to_hass()
-        self.async_on_remove(
-            self.coordinator.async_add_listener(
-                self.async_write_ha_state, self.coordinator.last_updated
-            )
-        )
         # Force first update
         await self.async_update()
 
