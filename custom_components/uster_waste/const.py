@@ -11,3 +11,5 @@ ATTR_ERROR = "error"
 
 # UI Labels
 MANUAL_REFRESH = "manual_refresh"
+
+MANUAL_REFRESH_SERVICE = "refresh_waste_schedule"
